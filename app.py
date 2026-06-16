@@ -1,31 +1,45 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from openai import OpenAI
+import os
 
 app = FastAPI()
 
-# 1. Put your OpenAI key here
-import os
+# -----------------------
+# CORS (REQUIRED for Qualtrics)
+# -----------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # OK for experiment/testing
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# -----------------------
+# OpenAI client
+# -----------------------
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
-# 2. This defines what Qualtrics will send us
+# -----------------------
+# Request schema
+# -----------------------
 class ChatRequest(BaseModel):
     participant_id: str
     message: str
     condition: str | None = None
 
 
+# -----------------------
+# Main endpoint
+# -----------------------
 @app.post("/chat")
 def chat(req: ChatRequest):
 
-    # 3. System instruction (you can later change this for experiments)
-    system_prompt = """
-    You are an assistant helping users think through scenarios.
-    Be neutral and do not encourage illegal or unethical behavior.
-    """
+    system_prompt = "You are a neutral assistant helping with decision-making tasks."
 
-    # 4. Call OpenAI
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=[
@@ -35,7 +49,6 @@ def chat(req: ChatRequest):
         temperature=0.7
     )
 
-    reply = response.choices[0].message.content
-
-    # 5. Send result back to Qualtrics
-    return {"reply": reply}
+    return {
+        "reply": response.choices[0].message.content
+    }
