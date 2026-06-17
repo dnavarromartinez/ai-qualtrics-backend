@@ -7,16 +7,12 @@ from datetime import datetime
 from pathlib import Path
 import csv
 import os
-import pandas as pd
 
 # -----------------------
-# App
+# APP
 # -----------------------
 app = FastAPI()
 
-# -----------------------
-# CORS (Qualtrics)
-# -----------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,12 +22,12 @@ app.add_middleware(
 )
 
 # -----------------------
-# OpenAI client
+# OPENAI
 # -----------------------
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # -----------------------
-# Log file (persistent disk)
+# LOG FILE (persistent disk)
 # -----------------------
 LOG_FILE = "/data/chat_logs.csv"
 
@@ -43,50 +39,27 @@ if not Path(LOG_FILE).exists():
             "participant_id",
             "condition",
             "role",
-            "content",
-            "msg_index"
+            "content"
         ])
 
 # -----------------------
-# Request schema
+# REQUEST MODEL
 # -----------------------
 class ChatRequest(BaseModel):
     participant_id: str
     message: str
     condition: str | None = None
 
-
 # -----------------------
-# PERSISTENT INDEX (derived from logs)
-# -----------------------
-def get_next_msg_index(participant_id: str) -> int:
-    if not Path(LOG_FILE).exists():
-        return 1
-
-    df = pd.read_csv(LOG_FILE)
-
-    p_df = df[df["participant_id"] == participant_id]
-
-    if p_df.empty:
-        return 1
-
-    # count USER messages only (turn-based index)
-    return len(p_df[p_df["role"] == "user"]) + 1
-
-
-# -----------------------
-# Chat endpoint
+# CHAT ENDPOINT
 # -----------------------
 @app.post("/chat")
 def chat(req: ChatRequest):
 
-    # -----------------------
-    # get turn index (PERSISTENT)
-    # -----------------------
-    msg_index = get_next_msg_index(req.participant_id)
+    timestamp = datetime.utcnow().isoformat()
 
     # -----------------------
-    # build conversation (no memory needed here for logging)
+    # OPENAI CALL (stateless chat)
     # -----------------------
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
@@ -104,10 +77,9 @@ def chat(req: ChatRequest):
     )
 
     ai_reply = response.choices[0].message.content
-    timestamp = datetime.utcnow().isoformat()
 
     # -----------------------
-    # LOG INTERACTION
+    # LOGGING (simple append-only)
     # -----------------------
     with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -117,8 +89,7 @@ def chat(req: ChatRequest):
             req.participant_id,
             req.condition,
             "user",
-            req.message,
-            msg_index
+            req.message
         ])
 
         writer.writerow([
@@ -126,12 +97,10 @@ def chat(req: ChatRequest):
             req.participant_id,
             req.condition,
             "assistant",
-            ai_reply,
-            msg_index
+            ai_reply
         ])
 
     return {"reply": ai_reply}
-
 
 # -----------------------
 # DOWNLOAD LOGS
