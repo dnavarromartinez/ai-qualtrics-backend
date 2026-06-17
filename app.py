@@ -13,10 +13,13 @@ import os
 # -----------------------
 app = FastAPI()
 
+# -----------------------
+# CORS (FIXED FOR QUALTRICS)
+# -----------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=["*"],   # simplest + most robust for Qualtrics
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -27,7 +30,7 @@ app.add_middleware(
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # -----------------------
-# LOG FILE
+# LOG FILE (Render persistent disk)
 # -----------------------
 LOG_FILE = "/data/chat_logs.csv"
 
@@ -43,7 +46,7 @@ if not Path(LOG_FILE).exists():
         ])
 
 # -----------------------
-# MEMORY STORAGE (in RAM)
+# SIMPLE MEMORY (per participant)
 # -----------------------
 conversation_memory = {}
 
@@ -56,15 +59,16 @@ class ChatRequest(BaseModel):
     condition: str | None = None
 
 # -----------------------
-# CHAT ENDPOINT (WITH MEMORY)
+# CHAT ENDPOINT
 # -----------------------
 @app.post("/chat")
 def chat(req: ChatRequest):
 
     pid = req.participant_id
+    timestamp = datetime.utcnow().isoformat()
 
     # -----------------------
-    # INIT MEMORY IF NEW PARTICIPANT
+    # INIT MEMORY
     # -----------------------
     if pid not in conversation_memory:
         conversation_memory[pid] = [
@@ -83,7 +87,7 @@ def chat(req: ChatRequest):
     })
 
     # -----------------------
-    # CALL OPENAI WITH FULL HISTORY
+    # CALL OPENAI WITH MEMORY
     # -----------------------
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
@@ -94,17 +98,15 @@ def chat(req: ChatRequest):
     ai_reply = response.choices[0].message.content
 
     # -----------------------
-    # ADD ASSISTANT MESSAGE TO MEMORY
+    # ADD ASSISTANT MESSAGE
     # -----------------------
     conversation_memory[pid].append({
         "role": "assistant",
         "content": ai_reply
     })
 
-    timestamp = datetime.utcnow().isoformat()
-
     # -----------------------
-    # LOGGING (simple)
+    # LOG TO CSV
     # -----------------------
     with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
