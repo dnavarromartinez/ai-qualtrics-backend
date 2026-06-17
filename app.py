@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from openai import OpenAI
 from datetime import datetime
@@ -17,7 +18,7 @@ app = FastAPI()
 # -----------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # OK for experiment; restrict later if needed
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -29,11 +30,11 @@ app.add_middleware(
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # -----------------------
-# Persistent log file (Render disk)
+# Log file (persistent disk)
 # -----------------------
 LOG_FILE = "/data/chat_logs.csv"
 
-# Create file + header if it doesn't exist
+# Create file if it doesn't exist
 if not Path(LOG_FILE).exists():
     with open(LOG_FILE, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -54,12 +55,11 @@ class ChatRequest(BaseModel):
     condition: str | None = None
 
 # -----------------------
-# Endpoint
+# Chat endpoint
 # -----------------------
 @app.post("/chat")
 def chat(req: ChatRequest):
 
-    # Call OpenAI
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=[
@@ -79,12 +79,11 @@ def chat(req: ChatRequest):
     timestamp = datetime.utcnow().isoformat()
 
     # -----------------------
-    # LOG USER + ASSISTANT MESSAGE
+    # LOG INTERACTION
     # -----------------------
     with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
 
-        # user message
         writer.writerow([
             timestamp,
             req.participant_id,
@@ -93,7 +92,6 @@ def chat(req: ChatRequest):
             req.message
         ])
 
-        # assistant message
         writer.writerow([
             timestamp,
             req.participant_id,
@@ -102,9 +100,17 @@ def chat(req: ChatRequest):
             ai_reply
         ])
 
-    # -----------------------
-    # RESPONSE TO QUALTRICS
-    # -----------------------
     return {
         "reply": ai_reply
     }
+
+# -----------------------
+# DOWNLOAD ENDPOINT (NEW)
+# -----------------------
+@app.get("/download-logs")
+def download_logs():
+    return FileResponse(
+        LOG_FILE,
+        media_type="text/csv",
+        filename="chat_logs.csv"
+    )
