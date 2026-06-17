@@ -1,0 +1,2 @@
+NOTES:
+- To get data go to https://ai-qualtrics-backend.onrender.com/download-logs. It Will be automatically downloaded from Render.

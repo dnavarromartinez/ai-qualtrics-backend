@@ -14,7 +14,7 @@ import os
 app = FastAPI()
 
 # -----------------------
-# CORS (required for Qualtrics)
+# CORS (Qualtrics compatibility)
 # -----------------------
 app.add_middleware(
     CORSMiddleware,
@@ -30,11 +30,15 @@ app.add_middleware(
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # -----------------------
-# Log file (persistent disk)
+# Conversation memory (NEW)
+# -----------------------
+conversations = {}
+
+# -----------------------
+# Persistent log file (Render disk)
 # -----------------------
 LOG_FILE = "/data/chat_logs.csv"
 
-# Create file if it doesn't exist
 if not Path(LOG_FILE).exists():
     with open(LOG_FILE, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -55,11 +59,23 @@ class ChatRequest(BaseModel):
     condition: str | None = None
 
 # -----------------------
-# Chat endpoint
+# Chat endpoint (UPDATED)
 # -----------------------
 @app.post("/chat")
 def chat(req: ChatRequest):
 
+    # -----------------------
+    # init conversation if new participant
+    # -----------------------
+    if req.participant_id not in conversations:
+        conversations[req.participant_id] = []
+
+    history = conversations[req.participant_id]
+
+    # add user message
+    history.append({"role": "user", "content": req.message})
+
+    # call OpenAI with full conversation history
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=[
@@ -67,10 +83,7 @@ def chat(req: ChatRequest):
                 "role": "system",
                 "content": "You are a neutral assistant helping users make decisions."
             },
-            {
-                "role": "user",
-                "content": req.message
-            }
+            *history
         ],
         temperature=0.7
     )
@@ -78,8 +91,11 @@ def chat(req: ChatRequest):
     ai_reply = response.choices[0].message.content
     timestamp = datetime.utcnow().isoformat()
 
+    # add assistant reply to memory
+    history.append({"role": "assistant", "content": ai_reply})
+
     # -----------------------
-    # LOG INTERACTION
+    # LOG INTERACTION (persistent)
     # -----------------------
     with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -100,12 +116,10 @@ def chat(req: ChatRequest):
             ai_reply
         ])
 
-    return {
-        "reply": ai_reply
-    }
+    return {"reply": ai_reply}
 
 # -----------------------
-# DOWNLOAD ENDPOINT (NEW)
+# DOWNLOAD LOGS
 # -----------------------
 @app.get("/download-logs")
 def download_logs():
