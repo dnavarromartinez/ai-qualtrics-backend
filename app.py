@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 import csv
 import os
+import pandas as pd
 
 # -----------------------
 # App
@@ -14,7 +15,7 @@ import os
 app = FastAPI()
 
 # -----------------------
-# CORS (Qualtrics compatibility)
+# CORS (Qualtrics)
 # -----------------------
 app.add_middleware(
     CORSMiddleware,
@@ -30,12 +31,7 @@ app.add_middleware(
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # -----------------------
-# Conversation memory (NEW)
-# -----------------------
-conversations = {}
-
-# -----------------------
-# Persistent log file (Render disk)
+# Log file (persistent disk)
 # -----------------------
 LOG_FILE = "/data/chat_logs.csv"
 
@@ -47,7 +43,8 @@ if not Path(LOG_FILE).exists():
             "participant_id",
             "condition",
             "role",
-            "content"
+            "content",
+            "msg_index"
         ])
 
 # -----------------------
@@ -58,24 +55,39 @@ class ChatRequest(BaseModel):
     message: str
     condition: str | None = None
 
+
 # -----------------------
-# Chat endpoint (UPDATED)
+# PERSISTENT INDEX (derived from logs)
+# -----------------------
+def get_next_msg_index(participant_id: str) -> int:
+    if not Path(LOG_FILE).exists():
+        return 1
+
+    df = pd.read_csv(LOG_FILE)
+
+    p_df = df[df["participant_id"] == participant_id]
+
+    if p_df.empty:
+        return 1
+
+    # count USER messages only (turn-based index)
+    return len(p_df[p_df["role"] == "user"]) + 1
+
+
+# -----------------------
+# Chat endpoint
 # -----------------------
 @app.post("/chat")
 def chat(req: ChatRequest):
 
     # -----------------------
-    # init conversation if new participant
+    # get turn index (PERSISTENT)
     # -----------------------
-    if req.participant_id not in conversations:
-        conversations[req.participant_id] = []
+    msg_index = get_next_msg_index(req.participant_id)
 
-    history = conversations[req.participant_id]
-
-    # add user message
-    history.append({"role": "user", "content": req.message})
-
-    # call OpenAI with full conversation history
+    # -----------------------
+    # build conversation (no memory needed here for logging)
+    # -----------------------
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=[
@@ -83,7 +95,10 @@ def chat(req: ChatRequest):
                 "role": "system",
                 "content": "You are a neutral assistant helping users make decisions."
             },
-            *history
+            {
+                "role": "user",
+                "content": req.message
+            }
         ],
         temperature=0.7
     )
@@ -91,11 +106,8 @@ def chat(req: ChatRequest):
     ai_reply = response.choices[0].message.content
     timestamp = datetime.utcnow().isoformat()
 
-    # add assistant reply to memory
-    history.append({"role": "assistant", "content": ai_reply})
-
     # -----------------------
-    # LOG INTERACTION (persistent)
+    # LOG INTERACTION
     # -----------------------
     with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -105,7 +117,8 @@ def chat(req: ChatRequest):
             req.participant_id,
             req.condition,
             "user",
-            req.message
+            req.message,
+            msg_index
         ])
 
         writer.writerow([
@@ -113,10 +126,12 @@ def chat(req: ChatRequest):
             req.participant_id,
             req.condition,
             "assistant",
-            ai_reply
+            ai_reply,
+            msg_index
         ])
 
     return {"reply": ai_reply}
+
 
 # -----------------------
 # DOWNLOAD LOGS
