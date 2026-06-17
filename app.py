@@ -27,7 +27,7 @@ app.add_middleware(
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # -----------------------
-# LOG FILE (persistent disk)
+# LOG FILE
 # -----------------------
 LOG_FILE = "/data/chat_logs.csv"
 
@@ -43,6 +43,11 @@ if not Path(LOG_FILE).exists():
         ])
 
 # -----------------------
+# MEMORY STORAGE (in RAM)
+# -----------------------
+conversation_memory = {}
+
+# -----------------------
 # REQUEST MODEL
 # -----------------------
 class ChatRequest(BaseModel):
@@ -51,42 +56,62 @@ class ChatRequest(BaseModel):
     condition: str | None = None
 
 # -----------------------
-# CHAT ENDPOINT
+# CHAT ENDPOINT (WITH MEMORY)
 # -----------------------
 @app.post("/chat")
 def chat(req: ChatRequest):
 
-    timestamp = datetime.utcnow().isoformat()
+    pid = req.participant_id
 
     # -----------------------
-    # OPENAI CALL (stateless chat)
+    # INIT MEMORY IF NEW PARTICIPANT
     # -----------------------
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[
+    if pid not in conversation_memory:
+        conversation_memory[pid] = [
             {
                 "role": "system",
                 "content": "You are a neutral assistant helping users make decisions."
-            },
-            {
-                "role": "user",
-                "content": req.message
             }
-        ],
+        ]
+
+    # -----------------------
+    # ADD USER MESSAGE
+    # -----------------------
+    conversation_memory[pid].append({
+        "role": "user",
+        "content": req.message
+    })
+
+    # -----------------------
+    # CALL OPENAI WITH FULL HISTORY
+    # -----------------------
+    response = client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=conversation_memory[pid],
         temperature=0.7
     )
 
     ai_reply = response.choices[0].message.content
 
     # -----------------------
-    # LOGGING (simple append-only)
+    # ADD ASSISTANT MESSAGE TO MEMORY
+    # -----------------------
+    conversation_memory[pid].append({
+        "role": "assistant",
+        "content": ai_reply
+    })
+
+    timestamp = datetime.utcnow().isoformat()
+
+    # -----------------------
+    # LOGGING (simple)
     # -----------------------
     with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
 
         writer.writerow([
             timestamp,
-            req.participant_id,
+            pid,
             req.condition,
             "user",
             req.message
@@ -94,7 +119,7 @@ def chat(req: ChatRequest):
 
         writer.writerow([
             timestamp,
-            req.participant_id,
+            pid,
             req.condition,
             "assistant",
             ai_reply
